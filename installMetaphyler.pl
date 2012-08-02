@@ -25,7 +25,7 @@ print "$cmd\n";
 system($cmd);
 
 my $gcc = "g++ -Wall -W -O2";
-my @programs = ("simuReads", "metaphylerTrain", "metaphylerClassify", "taxprof", "combine");
+my @programs = ("simuReads", "metaphylerClassify", "taxprof", "combine", "scores");
 foreach my $program (@programs) {
     $cmd = "$gcc -o $Bin/bin/$program $Bin/src/$program.cpp";
     print "$cmd\n";

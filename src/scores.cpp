@@ -1,6 +1,5 @@
-// Based on the BLAST file, in which the simulated reads are mapped
-// to reference genes, this program trains metaphyler classification
-// models.
+// BLAST file: the simulated reads are mapped to reference genes
+// This program reports the scores in a histogram style
 
 #include <iostream>
 using std::cout;
@@ -28,6 +27,7 @@ using std::greater;
 
 #include <cstdlib>
 #include <ctime>
+#include <cmath>
 
 #include <utility>
 using std::pair;
@@ -45,21 +45,22 @@ typedef map<string, float>  S2F;
 
 const unsigned int BITCUTOFF  = 1;
 
+
+// stores command line options
 struct Cmdopts{
   string taxfile,
          blastfile,
          blast,
          refseq;
   Usint  readlen;
-  bool   norm;
 };
 
 void helpmsg();
 void getcmdopts(int argc, char *argv[], Cmdopts &cmdopts);
 void readTaxFile(string taxfile, S2VS &seq2tax, S2I &tid2num);
-void normalize(S2I &tid2num, S2F &tid2norm);
-void train(string blastfile, S2VS &seq2tax, S2VVSI &seq2scores, S2F &tid2norm);
+void train(string blastfile, S2VS &seq2tax, S2VVSI &seq2scores);
 void printScores(S2VVSI &seq2scores, Cmdopts &cmdopts, const S2I &ref2len);
+void printDistribution(S2VVSI &seq2scores, Cmdopts &cmdopts, const S2I &ref2len);
 Usint findlca(S2VS::iterator riter, S2VS::iterator qiter);
 void readRefseq(string refseqfile, S2I &ref2len, string blast);
 
@@ -70,26 +71,22 @@ int main(int argc, char *argv[]) {
   getcmdopts(argc, argv, cmdopts);
 
 
-  S2I ref2len;
+  S2I ref2len;             // lengths of reference sequences
   readRefseq(cmdopts.refseq, ref2len, cmdopts.blast);
 
-  
+
   S2VS seq2tax;            // taxonomic profile of each reference sequence
   S2I  tid2num;            // number of genes under each lowest taxonomic cluster
   readTaxFile(cmdopts.taxfile, seq2tax, tid2num);
 
 
-  S2F  tid2norm;           // number used to normalized each taxonomic cluster
-  if (cmdopts.norm)
-    normalize(tid2num, tid2norm);
-  
-
   S2VVSI seq2scores;       // bit scores under each taxonomic level for each sequence
-  train(cmdopts.blastfile, seq2tax, seq2scores, tid2norm);
+  train(cmdopts.blastfile, seq2tax, seq2scores);
 
 
-  printScores(seq2scores, cmdopts, ref2len); // summarize scores and print them out
-  
+  //printScores(seq2scores, cmdopts, ref2len); // summarize scores and print them out
+  printDistribution(seq2scores, cmdopts, ref2len); // summarize scores and print them out
+
   return 0;
 }
 
@@ -132,23 +129,6 @@ void readRefseq(string refseqfile, S2I &ref2len, string blast) {
 }
 
 
-// Some clusters are under-sampled, to balance the cluster size, we need normalization.
-// Suppose we have 5 clusters with sizes: 1, 2, 5, 10 and 20.
-// To normalize, we need to inflate 1st cluster 20 times, 2nd 10 times, etc.
-// The idea is that if we have sequenced more same genomes within a cluster, it will
-// not affect our confidence score.
-void normalize(S2I &tid2num, S2F &tid2norm) {
-
-  Uint maxn = 0;
-
-  for (S2I::const_iterator iter = tid2num.begin(); iter != tid2num.end(); ++iter)
-    if (iter->second > maxn) maxn = iter->second; // find max element
-  
-  for (S2I::const_iterator iter = tid2num.begin(); iter != tid2num.end(); ++iter)
-    tid2norm.insert(S2F::value_type(iter->first, maxn*1.0 / iter->second)); // normalize
-}
-
-
 // load in taxonomy file
 void readTaxFile(string taxfile, S2VS &seq2tax, S2I &tid2num) {
 
@@ -187,31 +167,25 @@ void readTaxFile(string taxfile, S2VS &seq2tax, S2I &tid2num) {
 // parse command line options
 void getcmdopts(int argc, char *argv[], Cmdopts &cmdopts) {
 
-  if (argc != 7) {
+  if (argc != 6) {
     helpmsg();
     exit(1);
   }
 
-  string(argv[1]) == "norm" ? cmdopts.norm = true : cmdopts.norm = false;
 
-  cmdopts.taxfile   = argv[2];
-  cmdopts.refseq    = argv[3];
-  cmdopts.blastfile = argv[4];
-  cmdopts.readlen   = atoi(argv[5]);
-  cmdopts.blast     = argv[6];
+  cmdopts.taxfile   = argv[1];
+  cmdopts.refseq    = argv[2];
+  cmdopts.blastfile = argv[3];
+  cmdopts.readlen   = atoi(argv[4]);
+  cmdopts.blast     = argv[5];
 }
 
 
 // print sorted bit scores at each taxonomy level for each sequence
-// e.g., if 10 bit scores >= 90, then 90 10
 void printScores(S2VVSI &seq2scores, Cmdopts &cmdopts, const S2I &ref2len) {
 
   cout << "#Length " << cmdopts.readlen << endl;
   cout << "#BLAST " << cmdopts.blast << endl;
-  if (cmdopts.norm)
-    cout << "#Normalization true" << endl;
-  else
-    cout << "#Normalization false" << endl;
   
   // for each gene
   for (S2VVSI::iterator iter1 = seq2scores.begin(); iter1 != seq2scores.end(); ++iter1) {
@@ -239,6 +213,7 @@ void printScores(S2VVSI &seq2scores, Cmdopts &cmdopts, const S2I &ref2len) {
 	if (*iter3 != pre) { 
 	  cout << pre << " " << num << " "; // print out last record
 	  pre = *iter3;
+			num = 1;
 	}
 	num++;
       }
@@ -247,10 +222,43 @@ void printScores(S2VVSI &seq2scores, Cmdopts &cmdopts, const S2I &ref2len) {
   }
 }
 
+void printDistribution(S2VVSI &seq2scores, Cmdopts &cmdopts, const S2I &ref2len) {
+
+  cout << "#Length " << cmdopts.readlen << endl;
+  cout << "#BLAST " << cmdopts.blast << endl;
+  
+  // for each gene
+  for (S2VVSI::iterator iter1 = seq2scores.begin(); iter1 != seq2scores.end(); ++iter1) {
+
+    if (ref2len.find(iter1->first)->second < cmdopts.readlen) continue;
+    
+    cout << ">" << iter1->first << "\t" << iter1->second.size() - 1 << endl;
+
+    // for each taxonomic level
+    for (VVSI::iterator iter2 = iter1->second.begin(); iter2 != iter1->second.end(); ++iter2) {
+
+      if (iter2->empty()) {
+	cout << endl;
+	continue;
+      }
+      
+      // print out each score, the number of scores that are >= this score
+	Uint sum = 0, sqsum = 0;
+      for (VSI::iterator iter3 = iter2->begin(); iter3 != iter2->end(); ++iter3) {
+		sum += *iter3;
+		sqsum += (*iter3)*(*iter3);
+      }
+	Uint num = iter2->size();
+	cout << sum / num << "\t" << sqrt((sqsum/num) - (sum/num)*(sum/num)) << endl;
+      //cout << pre << " " << num << " " << endl; // print out last record
+    }
+  }
+}
+
 
 // process blast bit scores, compare the tax labels between query and reference
 // store them in corresponding tax level
-void train(string blastfile, S2VS &seq2tax, S2VVSI &seq2scores, S2F &tid2norm) {
+void train(string blastfile, S2VS &seq2tax, S2VVSI &seq2scores) {
   
   ifstream blastfile_ifs(blastfile.c_str());
   if (!blastfile_ifs)
@@ -288,19 +296,6 @@ void train(string blastfile, S2VS &seq2tax, S2VVSI &seq2scores, S2F &tid2norm) {
     S2VVSI::iterator scoreiter = seq2scores.find(rid);
     scoreiter->second[lca].push_back(bit);
 
-    // normalization
-    string tid = *(qiter->second.begin());
-    if (tid2norm.find(tid) != tid2norm.end()) {
-      
-      float norm = tid2norm.find(tid)->second;   // suppose normalization factor is 3.6
-
-      for (int j = 1; j < norm; ++j)             // then add 2 copies, since 1 copy has been added
-	scoreiter->second[lca].push_back(bit);
-      
-      if (rand() % 100 < (norm - int(norm))*100) // add 1 copy with probability = 0.6
-	scoreiter->second[lca].push_back(bit);
-    }
-    
   }
   
 }
@@ -336,11 +331,10 @@ void helpmsg() {
   cerr << endl;
 
   cerr << "Usage:" << endl;
-  cerr << "        ./metaphylerTrain <norm|unnorm> <taxonomy file> <ref seq> <BLAST file> <length> <BLAST program>" << endl;
+  cerr << "        ./metaphylerTrain <taxonomy file> <ref seq> <BLAST file> <length> <BLAST program>" << endl;
   cerr << endl;
 
   cerr << "Options:" << endl;
-  cerr << "        <norm|unnorm>   Perform normalization (norm) or not (unnorm)." << endl << endl;
 
   cerr << "        <taxonomy file> Taxonomy labels of reference sequences in the BLAST file." << endl << endl;
 
